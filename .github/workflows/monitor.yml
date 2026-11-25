@@ -1,0 +1,60 @@
+name: VPS 宕机监控
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 探测状态页与关键端口
+        id: probe
+        run: |
+          RESULTS=""
+          FAILED=0
+
+          check_url() {
+            local name="$1" url="$2"
+            local code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$url" 2>/dev/null || echo 000)
+            if [ "$code" = "200" ]; then
+              RESULTS="$RESULTS✅ $name: OK\n"
+            else
+              RESULTS="$RESULTS❌ $name: FAIL (HTTP $code)\n"
+              FAILED=$((FAILED+1))
+            fi
+          }
+
+          check_port() {
+            local name="$1" host="$2" port="$3"
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null; then
+              RESULTS="$RESULTS✅ $name: 端口 $port 开放\n"
+            else
+              RESULTS="$RESULTS❌ $name: 端口 $port 不通\n"
+              FAILED=$((FAILED+1))
+            fi
+          }
+
+          check_url "状态页" "https://137.131.6.137.sslip.io/status.json"
+          check_url "AI 网关" "https://ai.137.131.6.137.sslip.io/api/status"
+          check_port "SSH" "137.131.6.137" 22
+          check_port "Portainer" "137.131.6.137" 9443
+
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          printf "---RESULTS---\n%b---END---\n" "$RESULTS"
+          printf '%b' "$RESULTS" > results.txt
+
+      - name: 异常时微信告警
+        if: steps.probe.outputs.failed != '0'
+        run: |
+          DESC=$(cat results.txt)
+          curl -sS -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
+            -d "title=⚠️ VPS 异常" \
+            --data-urlencode "desp=$DESC"
+
+      - name: 恢复通知
+        if: steps.probe.outputs.failed == '0'
+        run: |
+          echo "所有探测正常，无告警"
