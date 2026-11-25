@@ -42,21 +42,38 @@ jobs:
             fi
           }
 
-          check_url STATUS_PAGE "https://137.131.6.137.sslip.io/status.json"
-          check_url AI_GATEWAY "https://ai.137.131.6.137.sslip.io/api/status"
+          check_url STATUS_PAGE "https://wqqwqq.de5.net/status.json"
+          check_url AI_GATEWAY "https://ai.wqqwqq.de5.net/api/status"
           check_port SSH 137.131.6.137 22
           check_port PORTAINER 137.131.6.137 9443
 
           echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
           cat "$RESULTS_FILE"
 
-      - name: 异常时微信告警
+      - name: 异常时微信告警（PushPlus）
         if: steps.probe.outputs.failed != '0'
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: |
-          DESC=$(cat results.txt)
-          curl -sS -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
-            -d "title=WARN VPS abnormal" \
-            --data-urlencode "desp=$DESC"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          desc = open('results.txt', encoding='utf-8').read().strip()
+          token = os.environ['PUSHPLUS_TOKEN']
+          body = json.dumps({
+              'token': token,
+              'title': 'WARN VPS abnormal',
+              'content': '<pre>' + desc.replace('<', '&lt;') + '</pre>',
+              'template': 'html',
+          }).encode()
+          req = urllib.request.Request(
+              'https://www.pushplus.plus/send', data=body,
+              headers={'Content-Type': 'application/json'})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  print('pushplus:', r.read().decode()[:200])
+          except Exception as e:
+              print('pushplus ERR:', e)
+          PY
 
       - name: 正常无需告警
         if: steps.probe.outputs.failed == '0'
